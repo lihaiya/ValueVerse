@@ -1,0 +1,43 @@
+{
+  "name": "valueverse-frontend",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 0.0.0.0",
+    "build": "vue-tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "test": "vitest run",
+    "typecheck": "vue-tsc --noEmit",
+    "mock:data": "node scripts/generateMockData.mjs"
+  },
+  "dependencies": {
+    "@element-plus/icons-vue": "^2.3.1",
+    "@antv/x6": "^2.18.1",
+    "axios": "^1.7.9",
+    "echarts": "^6.1.0",
+    "element-plus": "^2.9.2",
+    "markdown-it": "^14.1.0",
+    "pinia": "^2.3.0",
+    "vue": "^3.5.13",
+    "vue-router": "^4.5.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.15",
+    "@types/markdown-it": "^14.1.2",
+    "@vitejs/plugin-vue": "^5.2.1",
+    "@vue/test-utils": "^2.4.6",
+    "jsdom": "^27.4.0",
+    "typescript": "^5.7.2",
+    "vite": "^6.0.7",
+    "vitest": "^4.1.10",
+    "vue-tsc": "^2.2.0"
+  },
+  "allowScripts": {
+    "esbuild": true,
+    "vue-demi": true
+  },
+  "overrides": {
+    "glob": "13.0.6"
+  }
+}

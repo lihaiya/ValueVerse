@@ -24,6 +24,32 @@ ValueVerse（价值宇宙）是面向价值投资者打造的开源企业基本�
 
 🧩 可扩展架构：可对接数据源、接入大模型做基本面 RAG 分析，支持二次开发与私有部署
 
+## 技术实现与部署说明
+
+当前仓库包含可运行的前后端实现和单机 Docker Compose 部署配置。
+
+- 前端：Vue 3、TypeScript、Vite、Pinia、Element Plus；生产镜像使用 Nginx 托管静态文件，并将 `/api` 反向代理到后端服务。
+- 后端：FastAPI、SQLModel、Python 3.11；提供文档上传解析、Wiki 节点管理、RAG 对话、动态 LLM 配置、账号与邮箱验证等接口。
+- 数据存储：PostgreSQL 15 保存业务数据；后端 `/app/storage` 保存上传原文、解析产物、Cognee 数据与模型缓存。
+- 记忆与检索：集成 Cognee 本地记忆层，未可用时会回退到本地检索逻辑。
+- 部署：`docker-compose.prod.yml` 使用 Postgres、Redis、Backend、Frontend 四个服务；生产环境通过 `.env.production.example` 生成 `.env.production`。
+
+本地 Docker 启动：
+
+```bash
+docker compose up --build
+```
+
+生产部署入口：
+
+```bash
+docker compose --env-file .env.production -f docker-compose.prod.yml up -d --build
+```
+
+正式 HTTPS 发布建议在宿主机 Nginx、Caddy 或云负载均衡上配置域名和证书，监听公网 `443`，再反代到前端容器暴露的本机 HTTP 端口。详细步骤见 `docs/deploy.md`。
+
+敏感配置不要提交到仓库：`.env.production`、本地上传/缓存数据都应只保留在部署环境。
+
 # 👥 适合谁
 
 1，个人价值投资者，希望系统化管理个股研究笔记

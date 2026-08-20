@@ -1,0 +1,13 @@
+.env
+.env.production
+minimax.env
+.venv/
+__pycache__/
+.pytest_cache/
+*.pyc
+*.db
+backend/storage/
+backend/.coverage
+frontend/node_modules/
+frontend/dist/
+frontend/.env.local

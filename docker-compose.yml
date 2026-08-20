@@ -1,0 +1,92 @@
+name: valueverse
+
+services:
+  postgres:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_DB: value_wiki
+      POSTGRES_USER: value_wiki
+      POSTGRES_PASSWORD: value_wiki
+    ports:
+      - "5432:5432"
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U value_wiki -d value_wiki"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  backend:
+    build:
+      context: ./backend
+    env_file:
+      - ./minimax.env
+    environment:
+      DATABASE_URL: postgresql+psycopg://value_wiki:value_wiki@postgres:5432/value_wiki
+      REDIS_URL: redis://redis:6379/0
+      STORAGE_DIR: /app/storage
+      API_KEY_ENCRYPTION_SECRET: ${API_KEY_ENCRYPTION_SECRET:-dev-insecure-api-key-encryption-secret}
+      COGNEE_ENABLED: "true"
+      DATA_ROOT_DIRECTORY: /app/storage/cognee/data
+      SYSTEM_ROOT_DIRECTORY: /app/storage/cognee/system
+      CACHE_ROOT_DIRECTORY: /app/storage/cognee/cache
+      COGNEE_LOGS_DIR: /app/storage/cognee/logs
+      ENABLE_BACKEND_ACCESS_CONTROL: "true"
+      LLM_PROVIDER: custom
+      LLM_MODEL: openai/MiniMax-M3
+      LLM_ENDPOINT: https://api.minimaxi.com/v1
+      OPENAI_API_BASE: https://api.minimaxi.com/v1
+      OPENAI_BASE_URL: https://api.minimaxi.com/v1
+      LLM_INSTRUCTOR_MODE: json_mode
+      LLM_MAX_COMPLETION_TOKENS: "8192"
+      EMBEDDING_PROVIDER: fastembed
+      EMBEDDING_MODEL: jinaai/jina-embeddings-v2-base-zh
+      EMBEDDING_DIMENSIONS: "768"
+      EMBEDDING_MAX_COMPLETION_TOKENS: "8192"
+      EMBEDDING_BATCH_SIZE: "16"
+      HF_HOME: /app/storage/huggingface
+      FASTEMBED_CACHE_PATH: /app/storage/fastembed
+      TOKENIZERS_PARALLELISM: "false"
+      TELEMETRY_DISABLED: "true"
+      SMTP_HOST: ${SMTP_HOST:-smtp.exmail.qq.com}
+      SMTP_PORT: ${SMTP_PORT:-465}
+      SMTP_USERNAME: ${SMTP_USERNAME:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      SMTP_FROM_EMAIL: ${SMTP_FROM_EMAIL:-}
+      SMTP_FROM_NAME: ${SMTP_FROM_NAME:-valueverse}
+      SMTP_USE_SSL: ${SMTP_USE_SSL:-true}
+      SMTP_USE_TLS: ${SMTP_USE_TLS:-false}
+      SMTP_TIMEOUT_SECONDS: ${SMTP_TIMEOUT_SECONDS:-20}
+      CORS_ORIGINS: http://localhost:5173,http://127.0.0.1:5173
+    ports:
+      - "8000:8000"
+    volumes:
+      - backend_storage:/app/storage
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  frontend:
+    build:
+      context: ./frontend
+    ports:
+      - "5173:80"
+    depends_on:
+      - backend
+
+volumes:
+  pg_data:
+    name: value-invest-wiki_pg_data
+  backend_storage:
+    name: value-invest-wiki_backend_storage

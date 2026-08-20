@@ -1,0 +1,7 @@
+storage
+.pytest_cache
+__pycache__
+*.pyc
+*.db
+.env
+.coverage

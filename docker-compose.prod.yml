@@ -1,0 +1,103 @@
+name: valueverse
+
+services:
+  postgres:
+    image: postgres:15-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-value_wiki}
+      POSTGRES_USER: ${POSTGRES_USER:-value_wiki}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+    volumes:
+      # Bind the database files to the server data disk.
+      - ${POSTGRES_DATA_DIR:?POSTGRES_DATA_DIR is required}:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-value_wiki} -d ${POSTGRES_DB:-value_wiki}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  backend:
+    build:
+      context: ./backend
+    restart: unless-stopped
+    env_file:
+      - ./minimax.env
+    environment:
+      APP_ENV: production
+      AUTH_SECRET: ${AUTH_SECRET:?AUTH_SECRET is required}
+      API_KEY_ENCRYPTION_SECRET: ${API_KEY_ENCRYPTION_SECRET:?API_KEY_ENCRYPTION_SECRET is required}
+      AUTH_COOKIE_SECURE: "true"
+      AUTH_COOKIE_SAMESITE: ${AUTH_COOKIE_SAMESITE:-lax}
+      API_DOCS_ENABLED: ${API_DOCS_ENABLED:-false}
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-value_wiki}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@postgres:5432/${POSTGRES_DB:-value_wiki}
+      REDIS_URL: redis://redis:6379/0
+      STORAGE_DIR: /app/storage
+      MAX_UPLOAD_BYTES: ${MAX_UPLOAD_BYTES:-209715200}
+      COGNEE_ENABLED: "true"
+      DATA_ROOT_DIRECTORY: /app/storage/cognee/data
+      SYSTEM_ROOT_DIRECTORY: /app/storage/cognee/system
+      CACHE_ROOT_DIRECTORY: /app/storage/cognee/cache
+      COGNEE_LOGS_DIR: /app/storage/cognee/logs
+      ENABLE_BACKEND_ACCESS_CONTROL: "true"
+      LLM_PROVIDER: custom
+      LLM_MODEL: openai/MiniMax-M3
+      LLM_ENDPOINT: https://api.minimaxi.com/v1
+      OPENAI_API_BASE: https://api.minimaxi.com/v1
+      OPENAI_BASE_URL: https://api.minimaxi.com/v1
+      LLM_INSTRUCTOR_MODE: json_mode
+      LLM_MAX_COMPLETION_TOKENS: "8192"
+      ALLOWED_LLM_HOSTS: ${ALLOWED_LLM_HOSTS:-api.minimaxi.com,api.openai.com,ollama,host.docker.internal}
+      ALLOWED_WEB_SEARCH_COMMANDS: ${ALLOWED_WEB_SEARCH_COMMANDS:-uvx}
+      ALLOWED_WEB_SEARCH_PACKAGES: ${ALLOWED_WEB_SEARCH_PACKAGES:-minimax-coding-plan-mcp}
+      EMBEDDING_PROVIDER: fastembed
+      EMBEDDING_MODEL: jinaai/jina-embeddings-v2-base-zh
+      EMBEDDING_DIMENSIONS: "768"
+      EMBEDDING_MAX_COMPLETION_TOKENS: "8192"
+      EMBEDDING_BATCH_SIZE: "16"
+      HF_HOME: /app/storage/huggingface
+      FASTEMBED_CACHE_PATH: /app/storage/fastembed
+      TOKENIZERS_PARALLELISM: "false"
+      TELEMETRY_DISABLED: "true"
+      SMTP_HOST: ${SMTP_HOST:-smtp.exmail.qq.com}
+      SMTP_PORT: ${SMTP_PORT:-465}
+      SMTP_USERNAME: ${SMTP_USERNAME:?SMTP_USERNAME is required}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:?SMTP_PASSWORD is required}
+      SMTP_FROM_EMAIL: ${SMTP_FROM_EMAIL:-}
+      SMTP_FROM_NAME: ${SMTP_FROM_NAME:-valueverse}
+      SMTP_USE_SSL: ${SMTP_USE_SSL:-true}
+      SMTP_USE_TLS: ${SMTP_USE_TLS:-false}
+      SMTP_TIMEOUT_SECONDS: ${SMTP_TIMEOUT_SECONDS:-20}
+      CORS_ORIGINS: ${CORS_ORIGINS:?CORS_ORIGINS is required}
+    volumes:
+      # Bind uploads, parsed artifacts, Cognee state, and model caches to the server data disk.
+      - ${BACKEND_STORAGE_DIR:?BACKEND_STORAGE_DIR is required}:/app/storage
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8000/api/health || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+
+  frontend:
+    build:
+      context: ./frontend
+    restart: unless-stopped
+    ports:
+      - "${FRONTEND_BIND_ADDRESS:-0.0.0.0}:${FRONTEND_PORT:-80}:80"
+    depends_on:
+      backend:
+        condition: service_healthy
