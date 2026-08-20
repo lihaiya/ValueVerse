@@ -226,10 +226,12 @@ const webRules: FormRules = {
 }
 
 async function loadConfig() {
+  await configStore.fetchConfig().catch(() => null)
   await configStore.fetchConfigs()
   await configStore.fetchWebSearchConfigs()
   const active = configStore.llmConfigs.find((item) => item.is_active) || configStore.llmConfigs[0]
   if (active) selectProfile(active)
+  else if (configStore.llmConfig) selectProfile(configStore.llmConfig)
   const activeWeb = configStore.webSearchConfigs.find((item) => item.is_active) || configStore.webSearchConfigs[0]
   if (activeWeb) selectWebSearchProfile(activeWeb)
 }

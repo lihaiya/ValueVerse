@@ -35,15 +35,16 @@ async def extract_wiki_with_llm(
     base_metadata: dict[str, Any],
     source_path: Path,
     workspace_id: UUID | str | None = None,
+    owner_user_id: UUID | str | None = None,
 ) -> LLMExtraction:
-    config = LLMFactory.get_config(workspace_id=workspace_id)
+    config = LLMFactory.get_config(workspace_id=workspace_id, owner_user_id=owner_user_id)
     prompt = _build_prompt(
         text=text,
         base_metadata=base_metadata,
         source_path=source_path,
         document_char_limit=_document_char_limit(config.provider, config.max_tokens),
     )
-    raw_response = await LLMFactory.generate(prompt, response_format="json", workspace_id=workspace_id)
+    raw_response = await LLMFactory.generate(prompt, response_format="json", workspace_id=workspace_id, owner_user_id=owner_user_id)
     payload = _parse_json_object(raw_response)
     metadata = _normalize_metadata(payload.get("metadata") or payload.get("yaml_meta") or {}, base_metadata, source_path)
     markdown = _extract_markdown(payload)
@@ -58,6 +59,7 @@ async def extract_wiki_with_llm(
             ),
             response_format="json",
             workspace_id=workspace_id,
+            owner_user_id=owner_user_id,
         )
         repair_payload = _parse_json_object(repair_response)
         repair_markdown = _extract_markdown(repair_payload)

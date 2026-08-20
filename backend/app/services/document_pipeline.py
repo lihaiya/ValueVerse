@@ -104,7 +104,10 @@ async def process_staged_upload(
                 task=task,
                 source_document=source_document,
                 session=session,
-                memory_client=MemoryClient(session),
+                memory_client=MemoryClient(
+                    session,
+                    owner_user_id=owner_user_id or source_document.owner_user_id,
+                ),
                 selected_domain_id=selected_domain_id,
                 selected_domain_pack_ids=selected_domain_pack_ids or [],
                 folder_path=folder_path,
@@ -118,7 +121,10 @@ async def process_staged_upload(
                 return
             if exc.delete_after:
                 delete_source_file = bool((source_document.document_metadata or {}).get("delete_source_file"))
-                memory_result = await MemoryClient(session).forget(
+                memory_result = await MemoryClient(
+                    session,
+                    owner_user_id=owner_user_id or source_document.owner_user_id,
+                ).forget(
                     workspace_id=workspace_id or source_document.workspace_id,
                     local_resource_type="source_document",
                     local_resource_id=str(source_document.id),
@@ -261,7 +267,13 @@ async def _process_staged_upload(
 
     if settings.llm_extraction_enabled:
         try:
-            extraction = await extract_wiki_with_llm(parsed.text, metadata, raw_path, workspace_id=workspace_id)
+            extraction = await extract_wiki_with_llm(
+                parsed.text,
+                metadata,
+                raw_path,
+                workspace_id=workspace_id,
+                owner_user_id=owner_user_id,
+            )
             _raise_if_cancelled(session, source_document.id, task.id)
             metadata = extraction.metadata
             markdown = extraction.markdown

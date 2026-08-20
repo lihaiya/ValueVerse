@@ -37,16 +37,29 @@ class RuntimeLLMConfig:
 
 class LLMFactory:
     @classmethod
-    def get_config(cls, workspace_id: UUID | str | None = None) -> RuntimeLLMConfig:
-        return _get_active_config(str(workspace_id) if workspace_id else "")
+    def get_config(
+        cls,
+        workspace_id: UUID | str | None = None,
+        owner_user_id: UUID | str | None = None,
+    ) -> RuntimeLLMConfig:
+        return _get_active_config(
+            str(workspace_id) if workspace_id else "",
+            str(owner_user_id) if owner_user_id else "",
+        )
 
     @classmethod
     def invalidate(cls) -> None:
         _get_active_config.cache_clear()
 
     @classmethod
-    async def generate(cls, prompt: str, response_format: str | None = None, workspace_id: UUID | str | None = None) -> str:
-        config = cls.get_config(workspace_id=workspace_id)
+    async def generate(
+        cls,
+        prompt: str,
+        response_format: str | None = None,
+        workspace_id: UUID | str | None = None,
+        owner_user_id: UUID | str | None = None,
+    ) -> str:
+        config = cls.get_config(workspace_id=workspace_id, owner_user_id=owner_user_id)
         _validate_llm_endpoint(config)
         if config.provider == "ollama":
             return await _generate_ollama(config, prompt, response_format=response_format)
@@ -58,18 +71,26 @@ class LLMFactory:
 
 
 @lru_cache(maxsize=128)
-def _get_active_config(workspace_id: str = "") -> RuntimeLLMConfig:
+def _get_active_config(workspace_id: str = "", owner_user_id: str = "") -> RuntimeLLMConfig:
     with Session(get_engine()) as session:
         config = None
-        if workspace_id:
+        if workspace_id and owner_user_id:
             config = session.exec(
                 select(LLMConfigTable).where(
                     LLMConfigTable.workspace_id == UUID(workspace_id),
+                    LLMConfigTable.owner_user_id == UUID(owner_user_id),
                     LLMConfigTable.is_active == True,
                 )
             ).first()
         if config is None:
-            config = session.exec(select(LLMConfigTable).where(LLMConfigTable.workspace_id.is_(None), LLMConfigTable.is_active == True)).first()
+            config = session.exec(
+                select(LLMConfigTable).where(
+                    LLMConfigTable.workspace_id.is_(None),
+                    LLMConfigTable.owner_user_id.is_(None),
+                    LLMConfigTable.provider == "ollama",
+                    LLMConfigTable.is_active == True,
+                )
+            ).first()
         if config is None:
             return RuntimeLLMConfig("本地 Ollama", "ollama", "http://localhost:11434", "qwen2.5:14b", None, 0.2, 4096)
         return RuntimeLLMConfig(

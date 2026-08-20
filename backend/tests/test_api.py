@@ -7,7 +7,7 @@ from sqlmodel import Session
 
 from app.db.session import create_db_and_tables, get_engine, seed_defaults
 from app.main import create_app
-from app.models import KnowledgeEdge, LLMConfigTable, ParseStatus, ParseTask, SourceDocument, WebSearchConfigTable, WikiNode
+from app.models import KnowledgeEdge, LLMConfigTable, ParseStatus, ParseTask, SourceDocument, UserAccount, WebSearchConfigTable, WikiNode
 from app.api.routes import _normalize_ticker
 from app.core.config import get_settings
 from app.schemas import WebSearchResponse, WebSearchResult
@@ -144,6 +144,9 @@ def test_account_profile_password_change_and_email_change(monkeypatch) -> None:
 
 def test_llm_config_roundtrip() -> None:
     with client:
+        fallback_response = client.get("/api/settings/llm-config")
+        assert fallback_response.status_code == 200
+        assert fallback_response.json()["provider"] == "ollama"
         payload = {
             "profile_name": "pytest ollama",
             "provider": "ollama",
@@ -189,8 +192,43 @@ def test_llm_config_roundtrip() -> None:
         assert activate_response.json()["provider"] == "minimax"
         from app.services.llm_factory import LLMFactory
 
-        runtime_config = LLMFactory.get_config(workspace_id=CURRENT_WORKSPACE_ID)
+        runtime_config = LLMFactory.get_config(
+            workspace_id=CURRENT_WORKSPACE_ID,
+            owner_user_id=CURRENT_USER_ID,
+        )
         assert runtime_config.api_key == "test-secret-key"
+
+        with Session(get_engine()) as session:
+            second_user = UserAccount(
+                email=f"pytest-second-{uuid4().hex}@example.com",
+                hashed_password="not-used",
+            )
+            session.add(second_user)
+            session.flush()
+            session.add(
+                LLMConfigTable(
+                    workspace_id=UUID(CURRENT_WORKSPACE_ID),
+                    owner_user_id=second_user.id,
+                    profile_name="second user minimax",
+                    provider="minimax",
+                    endpoint="https://api.minimaxi.com/v1",
+                    model_name="MiniMax-M3",
+                    api_key="second-user-secret",
+                    temperature=0.2,
+                    max_tokens=2048,
+                    is_active=True,
+                    updated_by="pytest",
+                )
+            )
+            session.commit()
+            second_user_id = second_user.id
+
+        LLMFactory.invalidate()
+        second_runtime_config = LLMFactory.get_config(
+            workspace_id=CURRENT_WORKSPACE_ID,
+            owner_user_id=second_user_id,
+        )
+        assert second_runtime_config.api_key == "second-user-secret"
 
 
 def test_web_search_config_roundtrip(monkeypatch) -> None:

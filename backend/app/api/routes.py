@@ -58,7 +58,7 @@ from app.schemas import (
 )
 from app.services.document_pipeline import process_staged_upload, stage_upload
 from app.services.knowledge_delete import collect_source_document_related, delete_local_source_files, delete_source_document_records
-from app.services.llm_factory import LLMFactory
+from app.services.llm_factory import LLMFactory, RuntimeLLMConfig
 from app.services.memory import MemoryClient
 from app.services.raw_content import load_raw_content
 from app.services.recall import build_recall_response
@@ -233,7 +233,14 @@ async def web_enrich_wiki_node(
     old_content = node.content_md or ""
     prompt = _build_web_enrich_prompt(node, old_content, web_result.results)
     try:
-        generated = _clean_generated_markdown(await LLMFactory.generate(prompt, response_format=None, workspace_id=context.workspace_id))
+        generated = _clean_generated_markdown(
+            await LLMFactory.generate(
+                prompt,
+                response_format=None,
+                workspace_id=context.workspace_id,
+                owner_user_id=context.user_id,
+            )
+        )
         new_content = _finalize_web_enrichment_content(node, generated, old_content, web_result.results)
     except Exception:
         new_content = _fallback_web_enrichment_content(node, old_content, web_result.results)
@@ -652,7 +659,7 @@ async def delete_source_document(
         session.commit()
         return OperationResponse(ok=True, message="document deletion requested", details={"delete_pending": True})
 
-    memory_result = await MemoryClient(session).forget(
+    memory_result = await MemoryClient(session, owner_user_id=context.user_id).forget(
         workspace_id=context.workspace_id,
         local_resource_type="source_document",
         local_resource_id=str(source_document.id),
@@ -686,7 +693,7 @@ async def reparse_source_document(
     if source_document.status in {"uploaded", "parsing", "extracting"}:
         raise HTTPException(status_code=409, detail="document is still being processed")
 
-    memory_result = await MemoryClient(session).forget(
+    memory_result = await MemoryClient(session, owner_user_id=context.user_id).forget(
         workspace_id=context.workspace_id,
         local_resource_type="source_document",
         local_resource_id=str(source_document.id),
@@ -975,7 +982,7 @@ def delete_domain(domain_id: UUID, session: SessionDep, context: WorkspaceContex
 @router.post("/admin/clear-knowledge", response_model=ClearKnowledgeResponse)
 async def clear_knowledge(session: SessionDep, context: WorkspaceContextDep, payload: ClearKnowledgeRequest | None = None) -> ClearKnowledgeResponse:
     request = payload or ClearKnowledgeRequest()
-    memory_result = await MemoryClient(session).forget_workspace(context.workspace_id)
+    memory_result = await MemoryClient(session, owner_user_id=context.user_id).forget_workspace(context.workspace_id)
     if not memory_result.get("ok"):
         raise HTTPException(status_code=502, detail="could not clear external workspace memory")
     refs = _collect_source_refs(session, context) if request.delete_source_files else []
@@ -1095,7 +1102,13 @@ def _delete_local_source_files(refs: list[str]) -> int:
 
 @router.post("/memory/recall", response_model=RecallResponse)
 async def recall(request: RecallRequest, session: SessionDep, context: WorkspaceContextDep) -> RecallResponse:
-    return await build_recall_response(session=session, request=request, memory_client=MemoryClient(session), workspace_id=context.workspace_id)
+    return await build_recall_response(
+        session=session,
+        request=request,
+        memory_client=MemoryClient(session, owner_user_id=context.user_id),
+        workspace_id=context.workspace_id,
+        owner_user_id=context.user_id,
+    )
 
 
 @router.post("/memory/forget", response_model=OperationResponse)
@@ -1108,7 +1121,7 @@ async def forget(request: ForgetRequest, session: SessionDep, context: Workspace
 
     doc_hash = request.doc_hash or (node.cognee_doc_hash if node is not None else None)
     if doc_hash or request.entity_urn:
-        result = await MemoryClient(session).forget(
+        result = await MemoryClient(session, owner_user_id=context.user_id).forget(
             workspace_id=context.workspace_id,
             doc_hash=doc_hash,
             entity_urn=request.entity_urn,
@@ -1160,7 +1173,7 @@ async def improve(request: ImproveRequest, session: SessionDep, context: Workspa
     node.yaml_meta = new_meta
     node.updated_at = utcnow()
     session.add(node)
-    result = await MemoryClient(session).improve(
+    result = await MemoryClient(session, owner_user_id=context.user_id).improve(
         workspace_id=context.workspace_id,
         owner_user_id=context.user_id,
         local_resource_id=str(node.id),
@@ -1187,12 +1200,19 @@ async def improve(request: ImproveRequest, session: SessionDep, context: Workspa
 @router.get("/settings/llm-config", response_model=LLMConfigRead)
 def get_llm_config(session: SessionDep, context: WorkspaceContextDep) -> LLMConfigRead:
     config = session.exec(
-        select(LLMConfigTable).where(_workspace_filter(LLMConfigTable, context), LLMConfigTable.is_active == True)
+        select(LLMConfigTable).where(
+            _workspace_filter(LLMConfigTable, context),
+            LLMConfigTable.owner_user_id == context.user_id,
+            LLMConfigTable.is_active == True,
+        )
     ).first()
     if config is None:
-        config = session.exec(select(LLMConfigTable).where(LLMConfigTable.workspace_id.is_(None), LLMConfigTable.is_active == True)).first()
-    if config is None:
-        raise HTTPException(status_code=404, detail="active llm config not found")
+        return _runtime_llm_config_to_read(
+            LLMFactory.get_config(
+                workspace_id=context.workspace_id,
+                owner_user_id=context.user_id,
+            )
+        )
     return _llm_config_to_read(config)
 
 
@@ -1200,7 +1220,10 @@ def get_llm_config(session: SessionDep, context: WorkspaceContextDep) -> LLMConf
 def list_llm_configs(session: SessionDep, context: WorkspaceContextDep) -> list[LLMConfigRead]:
     configs = session.exec(
         select(LLMConfigTable)
-        .where(_workspace_filter(LLMConfigTable, context))
+        .where(
+            _workspace_filter(LLMConfigTable, context),
+            LLMConfigTable.owner_user_id == context.user_id,
+        )
         .order_by(col(LLMConfigTable.is_active).desc(), col(LLMConfigTable.updated_at).desc())
     ).all()
     return [_llm_config_to_read(config) for config in configs]
@@ -1235,7 +1258,7 @@ def create_llm_config(payload: LLMConfigCreate, session: SessionDep, context: Wo
 @router.put("/settings/llm-configs/{config_id}", response_model=LLMConfigRead)
 def update_saved_llm_config(config_id: int, payload: LLMConfigUpdate, session: SessionDep, context: WorkspaceContextDep) -> LLMConfigRead:
     config = session.get(LLMConfigTable, config_id)
-    if config is None or not _is_workspace_record(config, context):
+    if config is None or not _is_workspace_record(config, context) or config.owner_user_id != context.user_id:
         raise HTTPException(status_code=404, detail="llm config not found")
     _apply_llm_config_payload(config, payload)
     session.add(config)
@@ -1250,7 +1273,7 @@ def update_saved_llm_config(config_id: int, payload: LLMConfigUpdate, session: S
 @router.post("/settings/llm-configs/{config_id}/activate", response_model=LLMConfigRead)
 def activate_saved_llm_config(config_id: int, session: SessionDep, context: WorkspaceContextDep) -> LLMConfigRead:
     config = session.get(LLMConfigTable, config_id)
-    if config is None or not _is_workspace_record(config, context):
+    if config is None or not _is_workspace_record(config, context) or config.owner_user_id != context.user_id:
         raise HTTPException(status_code=404, detail="llm config not found")
     _activate_llm_config(session, config_id, context)
     session.commit()
@@ -1262,7 +1285,7 @@ def activate_saved_llm_config(config_id: int, session: SessionDep, context: Work
 @router.delete("/settings/llm-configs/{config_id}", response_model=OperationResponse)
 def delete_saved_llm_config(config_id: int, session: SessionDep, context: WorkspaceContextDep) -> OperationResponse:
     config = session.get(LLMConfigTable, config_id)
-    if config is None or not _is_workspace_record(config, context):
+    if config is None or not _is_workspace_record(config, context) or config.owner_user_id != context.user_id:
         raise HTTPException(status_code=404, detail="llm config not found")
     if config.is_active:
         raise HTTPException(status_code=400, detail="active llm config cannot be deleted")
@@ -1274,7 +1297,9 @@ def delete_saved_llm_config(config_id: int, session: SessionDep, context: Worksp
 @router.put("/settings/llm-config", response_model=LLMConfigRead)
 def update_llm_config(payload: LLMConfigUpdate, session: SessionDep, context: WorkspaceContextDep) -> LLMConfigRead:
     config = session.get(LLMConfigTable, payload.id) if payload.id else None
-    if config is not None and not _is_workspace_record(config, context):
+    if config is not None and (
+        not _is_workspace_record(config, context) or config.owner_user_id != context.user_id
+    ):
         raise HTTPException(status_code=404, detail="llm config not found")
     if config is None:
         config = LLMConfigTable(
@@ -1329,7 +1354,12 @@ def _apply_llm_config_payload(config: LLMConfigTable, payload: LLMConfigUpdate) 
 def _activate_llm_config(session: Session, config_id: int | None, context: WorkspaceContextDep) -> None:
     if config_id is None:
         raise HTTPException(status_code=400, detail="llm config id is required")
-    configs = session.exec(select(LLMConfigTable).where(_workspace_filter(LLMConfigTable, context))).all()
+    configs = session.exec(
+        select(LLMConfigTable).where(
+            _workspace_filter(LLMConfigTable, context),
+            LLMConfigTable.owner_user_id == context.user_id,
+        )
+    ).all()
     for config in configs:
         config.is_active = config.id == config_id
         config.updated_at = utcnow() if config.is_active else config.updated_at
@@ -1350,6 +1380,23 @@ def _llm_config_to_read(config: LLMConfigTable) -> LLMConfigRead:
         is_active=config.is_active,
         updated_by=config.updated_by,
         updated_at=config.updated_at,
+    )
+
+
+def _runtime_llm_config_to_read(config: RuntimeLLMConfig) -> LLMConfigRead:
+    return LLMConfigRead(
+        id=None,
+        profile_name=config.profile_name,
+        provider=config.provider,
+        endpoint=config.effective_endpoint,
+        model_name=config.model_name,
+        has_api_key=bool(config.api_key),
+        api_key_masked=_mask_api_key(config.api_key),
+        temperature=config.temperature,
+        max_tokens=config.max_tokens,
+        is_active=True,
+        updated_by=None,
+        updated_at=None,
     )
 
 
@@ -1374,10 +1421,17 @@ def _audit_payload(payload: dict[str, object]) -> dict[str, object]:
 
 @router.api_route("/settings/test-llm", methods=["GET", "POST"], response_model=LLMTestResponse)
 async def test_llm_config(context: WorkspaceContextDep) -> LLMTestResponse:
-    config = LLMFactory.get_config(workspace_id=context.workspace_id)
+    config = LLMFactory.get_config(
+        workspace_id=context.workspace_id,
+        owner_user_id=context.user_id,
+    )
     started = perf_counter()
     try:
-        text = await LLMFactory.generate("请只回答 OK", workspace_id=context.workspace_id)
+        text = await LLMFactory.generate(
+            "请只回答 OK",
+            workspace_id=context.workspace_id,
+            owner_user_id=context.user_id,
+        )
         latency_ms = int((perf_counter() - started) * 1000)
         ok = bool(text.strip())
         return LLMTestResponse(
@@ -1828,8 +1882,9 @@ async def agent_dialog(request: DialogRequest, session: SessionDep, context: Wor
     response = await build_recall_response(
         session=session,
         request=recall_request,
-        memory_client=MemoryClient(session),
+        memory_client=MemoryClient(session, owner_user_id=context.user_id),
         workspace_id=context.workspace_id,
+        owner_user_id=context.user_id,
         conversation_history=[{"role": message.role, "content": message.content} for message in recent_messages],
     )
     session.add(

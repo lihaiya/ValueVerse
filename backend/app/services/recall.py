@@ -46,11 +46,14 @@ async def build_recall_response(
     request: RecallRequest,
     memory_client: MemoryClient,
     workspace_id: UUID | str | None = None,
+    owner_user_id: UUID | str | None = None,
     conversation_history: list[dict[str, str]] | None = None,
 ) -> RecallResponse:
     filters = {**request.filters}
     if workspace_id is not None:
         filters["workspace_id"] = str(workspace_id)
+    if owner_user_id is not None:
+        filters["owner_user_id"] = str(owner_user_id)
     memory_result = await memory_client.recall(request.query, request.top_k, filters)
     local_hits = _local_search(session, request.query, request.top_k, filters)
     web_result = None
@@ -93,6 +96,7 @@ async def build_recall_response(
                 _build_answer_prompt(request.query, prompt_context, strong_match),
                 response_format=None,
                 workspace_id=workspace_id,
+                owner_user_id=owner_user_id,
             )
         )
         answer = answer.strip() or fallback_answer

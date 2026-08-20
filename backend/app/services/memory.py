@@ -1,5 +1,7 @@
+import asyncio
 import hashlib
 import os
+from contextlib import asynccontextmanager
 from importlib import import_module
 from typing import Any
 from uuid import UUID
@@ -8,6 +10,7 @@ from sqlmodel import Session, col, select
 
 from app.core.config import get_settings
 from app.models import ExternalMemoryMapping, utcnow
+from app.services.llm_factory import LLMFactory
 from app.services.long_term_memory import (
     CogneeLongTermMemoryProvider,
     DisabledLongTermMemoryProvider,
@@ -39,6 +42,21 @@ COGNEE_CACHE_ENV_DEFAULTS = {
     "HF_HOME": "huggingface",
     "FASTEMBED_CACHE_PATH": "fastembed",
 }
+COGNEE_PROVIDER_ALIASES = {
+    "minimax": "custom",
+    "openai": "openai",
+    "custom_api": "custom",
+    "ollama": "ollama",
+}
+COGNEE_RUNTIME_ENV_KEYS = {
+    "LLM_API_KEY",
+    "LLM_PROVIDER",
+    "LLM_MODEL",
+    "LLM_ENDPOINT",
+    "OPENAI_API_BASE",
+    "OPENAI_BASE_URL",
+}
+_COGNEE_RUNTIME_LOCK = asyncio.Lock()
 
 
 class MemoryClient:
@@ -48,9 +66,11 @@ class MemoryClient:
         self,
         session: Session | None = None,
         provider: LongTermMemoryProvider | None = None,
+        owner_user_id: UUID | str | None = None,
     ) -> None:
         self.settings = get_settings()
         self.session = session
+        self.owner_user_id = _uuid_or_none(owner_user_id)
         self.provider = provider or _load_provider(self.settings.cognee_enabled)
 
     async def remember(
@@ -95,7 +115,16 @@ class MemoryClient:
         self.session.add(mapping)
         self.session.commit()
 
-        result = await self.provider.remember(content, dataset_name, scope, metadata)
+        try:
+            async with self._cognee_runtime(scope.workspace_id, metadata.get("owner_user_id")):
+                result = await self.provider.remember(content, dataset_name, scope, metadata)
+        except Exception as exc:
+            result = ProviderResult(
+                ok=False,
+                backend=f"{self.provider.name}.runtime",
+                dataset_name=dataset_name,
+                error=str(exc).strip()[:2000] or exc.__class__.__name__,
+            )
         self._apply_provider_result(mapping, result)
         return _result_dict(result, doc_hash, mapping.sync_status)
 
@@ -110,7 +139,15 @@ class MemoryClient:
         if scope is None:
             return {"ok": False, "backend": "memory-scope", "items": [], "error": "workspace_id is required"}
         dataset_names = self._recall_dataset_names(scope, filters)
-        result = await self.provider.recall(query, top_k, dataset_names, scope)
+        try:
+            async with self._cognee_runtime(scope.workspace_id, filters.get("owner_user_id")):
+                result = await self.provider.recall(query, top_k, dataset_names, scope)
+        except Exception as exc:
+            result = ProviderResult(
+                ok=False,
+                backend=f"{self.provider.name}.runtime",
+                error=str(exc).strip()[:2000] or exc.__class__.__name__,
+            )
         return {
             "ok": result.ok,
             "backend": result.backend,
@@ -188,15 +225,23 @@ class MemoryClient:
                     error="external dataset_id/data_id is missing",
                 )
             else:
-                result = await self.provider.forget(
-                    ExternalMemoryReference(
-                        dataset_name=mapping.dataset_name,
-                        dataset_id=mapping.external_dataset_id,
-                        data_id=mapping.external_data_id,
-                        user_id=mapping.external_user_id,
-                    ),
-                    scope,
-                )
+                try:
+                    async with self._cognee_runtime(scope.workspace_id, self.owner_user_id or mapping.owner_user_id):
+                        result = await self.provider.forget(
+                            ExternalMemoryReference(
+                                dataset_name=mapping.dataset_name,
+                                dataset_id=mapping.external_dataset_id,
+                                data_id=mapping.external_data_id,
+                                user_id=mapping.external_user_id,
+                            ),
+                            scope,
+                        )
+                except Exception as exc:
+                    result = ProviderResult(
+                        ok=False,
+                        backend=f"{self.provider.name}.runtime",
+                        error=str(exc).strip()[:2000] or exc.__class__.__name__,
+                    )
             if result.ok:
                 mapping.sync_status = "deleted"
                 mapping.deleted_at = utcnow()
@@ -383,6 +428,28 @@ class MemoryClient:
         names = list(dict.fromkeys(row.dataset_name for row in rows if row.dataset_name))
         return names or [_dataset_name(filters)]
 
+    @asynccontextmanager
+    async def _cognee_runtime(
+        self,
+        workspace_id: UUID | str,
+        owner_user_id: UUID | str | None = None,
+    ):
+        if not isinstance(self.provider, CogneeLongTermMemoryProvider):
+            yield
+            return
+
+        async with _COGNEE_RUNTIME_LOCK:
+            previous = {key: os.environ.get(key) for key in COGNEE_RUNTIME_ENV_KEYS}
+            _prepare_cognee_runtime(workspace_id, owner_user_id or self.owner_user_id)
+            try:
+                yield
+            finally:
+                for key, value in previous.items():
+                    if value is None:
+                        os.environ.pop(key, None)
+                    else:
+                        os.environ[key] = value
+
 
 def _load_provider(cognee_enabled: bool) -> LongTermMemoryProvider:
     if not cognee_enabled:
@@ -395,11 +462,34 @@ def _load_provider(cognee_enabled: bool) -> LongTermMemoryProvider:
     return CogneeLongTermMemoryProvider(module, _dataset_base())
 
 
+def _prepare_cognee_runtime(workspace_id: UUID | str | None, owner_user_id: UUID | str | None = None) -> None:
+    workspace = _uuid_or_none(workspace_id)
+    owner = _uuid_or_none(owner_user_id)
+    if workspace is None:
+        return
+    config = LLMFactory.get_config(workspace_id=workspace, owner_user_id=owner)
+    if config.provider == "ollama":
+        os.environ.pop("LLM_API_KEY", None)
+        os.environ["LLM_PROVIDER"] = "ollama"
+        os.environ["LLM_MODEL"] = config.model_name
+        os.environ["LLM_ENDPOINT"] = config.effective_endpoint
+        os.environ["OPENAI_API_BASE"] = config.effective_endpoint
+        os.environ["OPENAI_BASE_URL"] = config.effective_endpoint
+        return
+    if not config.api_key:
+        raise RuntimeError(f"{config.provider} API key is required for Cognee memory")
+    os.environ["LLM_API_KEY"] = config.api_key
+    os.environ["LLM_PROVIDER"] = COGNEE_PROVIDER_ALIASES.get(config.provider, config.provider)
+    os.environ["LLM_MODEL"] = config.model_name
+    os.environ["LLM_ENDPOINT"] = config.effective_endpoint
+    os.environ["OPENAI_API_BASE"] = config.effective_endpoint
+    os.environ["OPENAI_BASE_URL"] = config.effective_endpoint
+
+
 def _prepare_cognee_environment(environ: dict[str, str] | None = None) -> None:
     env = environ if environ is not None else os.environ
-    api_key = (env.get("LLM_API_KEY") or env.get("api_key") or "").strip()
-    if api_key and not env.get("LLM_API_KEY"):
-        env["LLM_API_KEY"] = api_key
+    env.pop("LLM_API_KEY", None)
+    env.pop("api_key", None)
     for key, value in COGNEE_LLM_DEFAULTS.items():
         if not env.get(key):
             env[key] = value

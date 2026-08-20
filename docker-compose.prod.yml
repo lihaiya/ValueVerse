@@ -30,8 +30,6 @@ services:
     build:
       context: ./backend
     restart: unless-stopped
-    env_file:
-      - ./minimax.env
     environment:
       APP_ENV: production
       AUTH_SECRET: ${AUTH_SECRET:?AUTH_SECRET is required}

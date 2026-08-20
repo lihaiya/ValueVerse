@@ -15,12 +15,18 @@ from app.services.long_term_memory import (
 from app.services.memory import COGNEE_LLM_DEFAULTS, MemoryClient, _dataset_name, _prepare_cognee_environment
 
 
-def test_prepare_cognee_environment_maps_minimax_key_without_overwriting() -> None:
-    env = {"api_key": "secret-minimax-key", "LLM_MODEL": "custom/model", "ENABLE_BACKEND_ACCESS_CONTROL": "false"}
+def test_prepare_cognee_environment_does_not_read_api_keys_from_environment() -> None:
+    env = {
+        "api_key": "legacy-shared-key",
+        "LLM_API_KEY": "legacy-shared-key",
+        "LLM_MODEL": "custom/model",
+        "ENABLE_BACKEND_ACCESS_CONTROL": "false",
+    }
 
     _prepare_cognee_environment(env)
 
-    assert env["LLM_API_KEY"] == "secret-minimax-key"
+    assert "LLM_API_KEY" not in env
+    assert "api_key" not in env
     assert env["LLM_MODEL"] == "custom/model"
     assert env["LLM_PROVIDER"] == COGNEE_LLM_DEFAULTS["LLM_PROVIDER"]
     assert env["LLM_ENDPOINT"] == "https://api.minimaxi.com/v1"

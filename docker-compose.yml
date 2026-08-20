@@ -28,8 +28,6 @@ services:
   backend:
     build:
       context: ./backend
-    env_file:
-      - ./minimax.env
     environment:
       DATABASE_URL: postgresql+psycopg://value_wiki:value_wiki@postgres:5432/value_wiki
       REDIS_URL: redis://redis:6379/0
