@@ -1,6 +1,7 @@
 import asyncio
 import hashlib
 import os
+import sys
 from contextlib import asynccontextmanager
 from importlib import import_module
 from typing import Any
@@ -57,6 +58,7 @@ COGNEE_RUNTIME_ENV_KEYS = {
     "OPENAI_BASE_URL",
 }
 _COGNEE_RUNTIME_LOCK = asyncio.Lock()
+_FASTEMBED_LOCAL_PATCHED = False
 
 
 class MemoryClient:
@@ -455,6 +457,7 @@ def _load_provider(cognee_enabled: bool) -> LongTermMemoryProvider:
     if not cognee_enabled:
         return DisabledLongTermMemoryProvider()
     _prepare_cognee_environment()
+    _configure_fastembed()
     try:
         module = import_module("cognee")
     except Exception as exc:
@@ -501,6 +504,34 @@ def _prepare_cognee_environment(environ: dict[str, str] | None = None) -> None:
     env["ENABLE_BACKEND_ACCESS_CONTROL"] = "true"
 
 
+def _configure_fastembed() -> None:
+    """Force Cognee's FastEmbed engine to use the persistent cache offline when configured."""
+    global _FASTEMBED_LOCAL_PATCHED
+    if _FASTEMBED_LOCAL_PATCHED or not _as_bool(os.getenv("FASTEMBED_LOCAL_FILES_ONLY")):
+        return
+
+    import fastembed
+
+    original = fastembed.TextEmbedding
+    if getattr(original, "_valueverse_local_only", False):
+        _FASTEMBED_LOCAL_PATCHED = True
+        return
+
+    def local_text_embedding(*args: Any, **kwargs: Any) -> Any:
+        kwargs.setdefault("cache_dir", os.getenv("FASTEMBED_CACHE_PATH"))
+        kwargs.setdefault("local_files_only", True)
+        return original(*args, **kwargs)
+
+    local_text_embedding._valueverse_local_only = True
+    fastembed.TextEmbedding = local_text_embedding
+    engine_module = sys.modules.get(
+        "cognee.infrastructure.databases.vector.embeddings.FastembedEmbeddingEngine"
+    )
+    if engine_module is not None:
+        engine_module.TextEmbedding = local_text_embedding
+    _FASTEMBED_LOCAL_PATCHED = True
+
+
 def _dataset_name(metadata: dict[str, Any]) -> str:
     workspace_id = _uuid_or_none(metadata.get("workspace_id"))
     if workspace_id is None:
@@ -522,6 +553,10 @@ def _safe_dataset_part(value: object) -> str:
     if not text:
         return ""
     return "".join(char if char.isalnum() else "_" for char in text.lower())[:64].strip("_")
+
+
+def _as_bool(value: object) -> bool:
+    return str(value or "").strip().lower() in {"1", "true", "yes", "on"}
 
 
 def _scope(value: object) -> MemoryScope | None:

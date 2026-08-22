@@ -12,7 +12,13 @@ from app.services.long_term_memory import (
     MemoryScope,
     ProviderResult,
 )
-from app.services.memory import COGNEE_LLM_DEFAULTS, MemoryClient, _dataset_name, _prepare_cognee_environment
+from app.services.memory import (
+    COGNEE_LLM_DEFAULTS,
+    MemoryClient,
+    _as_bool,
+    _dataset_name,
+    _prepare_cognee_environment,
+)
 
 
 def test_prepare_cognee_environment_does_not_read_api_keys_from_environment() -> None:
@@ -46,6 +52,13 @@ def test_prepare_cognee_environment_sets_persistent_fastembed_cache() -> None:
 
     assert env["HF_HOME"] == "/app/storage/huggingface"
     assert env["FASTEMBED_CACHE_PATH"] == "/app/storage/fastembed"
+
+
+def test_fastembed_local_flag_parsing() -> None:
+    assert _as_bool("true") is True
+    assert _as_bool("1") is True
+    assert _as_bool("false") is False
+    assert _as_bool(None) is False
 
 
 def test_dataset_name_requires_workspace_and_preserves_folder_scope() -> None:

@@ -8,6 +8,7 @@ import httpx
 from sqlmodel import Session, select
 
 from app.core.config import get_settings
+from app.core.llm_limits import DEFAULT_LLM_MAX_TOKENS
 from app.core.secrets import decrypt_api_key
 from app.db.session import get_engine
 from app.models import LLMConfigTable
@@ -92,7 +93,15 @@ def _get_active_config(workspace_id: str = "", owner_user_id: str = "") -> Runti
                 )
             ).first()
         if config is None:
-            return RuntimeLLMConfig("本地 Ollama", "ollama", "http://localhost:11434", "qwen2.5:14b", None, 0.2, 4096)
+            return RuntimeLLMConfig(
+                "本地 Ollama",
+                "ollama",
+                "http://localhost:11434",
+                "qwen2.5:14b",
+                None,
+                0.2,
+                DEFAULT_LLM_MAX_TOKENS,
+            )
         return RuntimeLLMConfig(
             profile_name=(config.profile_name or "未命名配置").strip(),
             provider=config.provider.strip(),

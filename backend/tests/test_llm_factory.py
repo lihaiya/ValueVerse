@@ -1,12 +1,34 @@
 import pytest
+from pydantic import ValidationError
 
 from app.core.config import get_settings
+from app.schemas import LLMConfigUpdate
 from app.services.llm_factory import RuntimeLLMConfig, _extract_chat_completion_text, _generate_chat_completions_api, _validate_llm_endpoint
 
 
 def test_extract_chat_completion_text() -> None:
     payload = {"choices": [{"message": {"content": "OK"}}]}
     assert _extract_chat_completion_text(payload) == "OK"
+
+
+def test_llm_config_allows_one_million_token_limit() -> None:
+    config = LLMConfigUpdate(
+        provider="ollama",
+        endpoint="http://localhost:11434",
+        model_name="qwen3.6:27b",
+        temperature=0.2,
+        max_tokens=1048576,
+    )
+    assert config.max_tokens == 1048576
+
+    with pytest.raises(ValidationError):
+        LLMConfigUpdate(
+            provider="ollama",
+            endpoint="http://localhost:11434",
+            model_name="qwen3.6:27b",
+            temperature=0.2,
+            max_tokens=1048577,
+        )
 
 
 @pytest.mark.asyncio

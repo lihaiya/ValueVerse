@@ -4,6 +4,8 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
+from app.core.llm_limits import MAX_LLM_MAX_TOKENS
+
 
 class WikiNodeRead(BaseModel):
     id: UUID
@@ -255,7 +257,7 @@ class LLMConfigUpdate(BaseModel):
     model_name: str = Field(min_length=1, max_length=100)
     api_key: str | None = Field(default=None, max_length=4096)
     temperature: float = Field(ge=0, le=2)
-    max_tokens: int = Field(ge=128, le=128000)
+    max_tokens: int = Field(ge=128, le=MAX_LLM_MAX_TOKENS)
     is_active: bool = True
     updated_by: str | None = Field(default="user", max_length=50)
 

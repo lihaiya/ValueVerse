@@ -6,8 +6,9 @@ This project can be deployed with Docker Compose on a single cloud server.
 2. Replace `AUTH_SECRET`, `API_KEY_ENCRYPTION_SECRET`, `POSTGRES_PASSWORD`, `CORS_ORIGINS`, and the SMTP placeholders.
 3. Set `POSTGRES_DATA_DIR` and `BACKEND_STORAGE_DIR` to directories on the server data disk. The backend mount holds uploaded files, parsed artifacts, Cognee caches, and Hugging Face / FastEmbed caches.
 4. Create those directories on the server and make sure the Docker daemon can write to them.
-5. LLM API keys are not configured through Docker environment files. Each user enters their own LLM profile and API key in the frontend settings; the backend stores the key encrypted with `API_KEY_ENCRYPTION_SECRET`.
-6. Start with:
+5. Keep `FASTEMBED_LOCAL_FILES_ONLY=true` on servers without Hugging Face network access. Preload the model into `${BACKEND_STORAGE_DIR}/fastembed` before starting document processing.
+6. LLM API keys are not configured through Docker environment files. Each user enters their own LLM profile and API key in the frontend settings; the backend stores the key encrypted with `API_KEY_ENCRYPTION_SECRET`.
+7. Start with:
 
 ```bash
 # Adjust these paths to match POSTGRES_DATA_DIR and BACKEND_STORAGE_DIR.
@@ -91,6 +92,8 @@ cat valueverse.sql | docker compose --env-file .env.production -f docker-compose
 ```
 
 Copy the existing backend storage directory into `${BACKEND_STORAGE_DIR}` separately. Preserve the `raw/`, `cognee/`, `huggingface/`, and `fastembed/` subdirectories.
+
+When the server cannot reach Hugging Face, copy a verified FastEmbed cache from a networked machine into `${BACKEND_STORAGE_DIR}/fastembed`. The cache must contain the model directory, `files_metadata.json`, `refs/main`, `snapshots/`, and `blobs/`; do not copy only the large ONNX file.
 
 ## Tencent Enterprise Mail
 

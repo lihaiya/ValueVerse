@@ -70,7 +70,8 @@
           <el-slider v-model="form.temperature" :min="0" :max="2" :step="0.1" show-input :marks="{ 0: '保守', 1: '平衡', 2: '发散' }" />
         </el-form-item>
         <el-form-item label="上下文 / Token" prop="max_tokens">
-          <el-input-number v-model="form.max_tokens" :min="512" :max="262144" :step="1024" />
+          <el-input-number v-model="form.max_tokens" :min="512" :max="1048576" :step="1024" />
+          <div class="form-help">Ollama 使用该值作为上下文窗口；MiniMax/OpenAI 兼容接口使用该值作为最大输出 Token。实际上限仍由模型服务商决定。</div>
         </el-form-item>
         <el-form-item>
           <div class="toolbar">
@@ -212,7 +213,7 @@ const rules: FormRules = {
   endpoint: [{ required: true, message: '请输入 endpoint', trigger: 'blur' }],
   model_name: [{ required: true, message: '请输入模型名称', trigger: 'blur' }],
   temperature: [{ type: 'number', min: 0, max: 2, message: '范围 0-2', trigger: 'change' }],
-  max_tokens: [{ type: 'number', min: 512, max: 262144, message: '范围 512-262144', trigger: 'change' }],
+  max_tokens: [{ type: 'number', min: 512, max: 1048576, message: '范围 512-1048576', trigger: 'change' }],
 }
 
 const webRules: FormRules = {

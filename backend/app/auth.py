@@ -16,6 +16,7 @@ from fastapi import APIRouter, Cookie, Depends, Header, HTTPException, Response,
 from sqlmodel import Session, col, select
 
 from app.core.config import get_settings
+from app.core.llm_limits import DEFAULT_LLM_MAX_TOKENS
 from app.db.session import get_session
 from app.models import EmailChangeCode, LLMConfigTable, UserAccount, WebSearchConfigTable, Workspace, WorkspaceMember, utcnow
 from app.schemas import (
@@ -438,7 +439,7 @@ def _seed_workspace_profiles(session: Session, workspace_id: UUID, user_id: UUID
             endpoint="http://localhost:11434",
             model_name="qwen3.6:27b",
             temperature=0.2,
-            max_tokens=32768,
+            max_tokens=DEFAULT_LLM_MAX_TOKENS,
             is_active=True,
             updated_by=updated_by,
         )
@@ -452,7 +453,7 @@ def _seed_workspace_profiles(session: Session, workspace_id: UUID, user_id: UUID
             endpoint="https://api.minimaxi.com/v1",
             model_name="MiniMax-M3",
             temperature=0.2,
-            max_tokens=8192,
+            max_tokens=DEFAULT_LLM_MAX_TOKENS,
             is_active=False,
             updated_by=updated_by,
         )

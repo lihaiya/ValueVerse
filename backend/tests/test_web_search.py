@@ -3,7 +3,15 @@ import asyncio
 import pytest
 
 from app.core.config import get_settings
-from app.services.web_search import RuntimeWebSearchConfig, _extract_mcp_result_text, _mcp_request, _results_from_mcp_payload, _validate_mcp_command
+from app.services.web_search import (
+    MCP_STDIO_READ_LIMIT,
+    RuntimeWebSearchConfig,
+    _call_mcp_web_search,
+    _extract_mcp_result_text,
+    _mcp_request,
+    _results_from_mcp_payload,
+    _validate_mcp_command,
+)
 
 
 def test_extract_mcp_text_content() -> None:
@@ -86,6 +94,52 @@ async def test_mcp_request_skips_stdout_noise() -> None:
     result = await _mcp_request(FakeProcess(), 1, "initialize", {}, 1)  # type: ignore[arg-type]
 
     assert result == {"ok": True}
+
+
+@pytest.mark.asyncio
+async def test_mcp_process_allows_large_json_lines(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+
+    class FakeProcess:
+        returncode = 0
+
+        def terminate(self) -> None:
+            return None
+
+        async def wait(self) -> int:
+            return 0
+
+    async def fake_create_process(*args, **kwargs):
+        captured.update(kwargs)
+        return FakeProcess()
+
+    async def fake_request(*args, **kwargs):
+        if args[1] == 1:
+            return {"ok": True}
+        return {"content": [{"type": "text", "text": "large result"}]}
+
+    async def fake_notify(*args, **kwargs):
+        return None
+
+    monkeypatch.setattr("app.services.web_search.asyncio.create_subprocess_exec", fake_create_process)
+    monkeypatch.setattr("app.services.web_search._mcp_request", fake_request)
+    monkeypatch.setattr("app.services.web_search._mcp_notify", fake_notify)
+
+    config = RuntimeWebSearchConfig(
+        profile_name="MiniMax",
+        provider="minimax_mcp",
+        endpoint="https://api.minimaxi.com",
+        api_key="secret",
+        command="uvx",
+        args=("minimax-coding-plan-mcp", "-y"),
+        tool_name="web_search",
+        timeout_seconds=5,
+        max_results=1,
+    )
+    result = await _call_mcp_web_search(config, "MiniMax")
+
+    assert captured["limit"] == MCP_STDIO_READ_LIMIT
+    assert result["content"][0]["text"] == "large result"
 
 
 def test_production_web_search_blocks_untrusted_command() -> None:

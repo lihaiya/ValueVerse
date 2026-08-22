@@ -6,6 +6,7 @@ from sqlalchemy.engine import Engine
 from sqlmodel import Session, SQLModel, create_engine, select
 
 from app.core.config import get_settings
+from app.core.llm_limits import DEFAULT_LLM_MAX_TOKENS
 from app.core.secrets import encrypt_api_key, is_encrypted_secret
 from app.models import Domain, DomainPack, DomainPackBinding, LLMConfigTable, WebSearchConfigTable
 
@@ -109,7 +110,7 @@ def seed_defaults() -> None:
                     endpoint="http://localhost:11434",
                     model_name="qwen2.5:14b",
                     temperature=0.2,
-                    max_tokens=4096,
+                    max_tokens=DEFAULT_LLM_MAX_TOKENS,
                     is_active=True,
                     updated_by="system",
                 )
@@ -131,7 +132,7 @@ def _seed_llm_profiles(session: Session) -> None:
                 endpoint="https://api.minimaxi.com/v1",
                 model_name="MiniMax-M3",
                 temperature=0.2,
-                max_tokens=8192,
+                max_tokens=DEFAULT_LLM_MAX_TOKENS,
                 is_active=False,
                 updated_by="system",
             )

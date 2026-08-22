@@ -18,6 +18,9 @@ from app.models import WebSearchConfigTable
 from app.schemas import WebSearchResponse, WebSearchResult
 
 
+MCP_STDIO_READ_LIMIT = 8 * 1024 * 1024
+
+
 @dataclass(frozen=True)
 class RuntimeWebSearchConfig:
     profile_name: str
@@ -115,6 +118,7 @@ async def _call_mcp_web_search(config: RuntimeWebSearchConfig, query: str) -> di
         stdin=asyncio.subprocess.PIPE,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
+        limit=MCP_STDIO_READ_LIMIT,
         env=env,
     )
     try:

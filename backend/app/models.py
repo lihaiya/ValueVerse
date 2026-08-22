@@ -6,6 +6,8 @@ from uuid import UUID, uuid4
 from sqlalchemy import Boolean, Column, DateTime, Float, Integer, JSON, String, Text, UniqueConstraint
 from sqlmodel import Field, SQLModel
 
+from app.core.llm_limits import DEFAULT_LLM_MAX_TOKENS
+
 
 def utcnow() -> datetime:
     return datetime.now(timezone.utc)
@@ -174,7 +176,7 @@ class LLMConfigTable(SQLModel, table=True):
     model_name: str = Field(max_length=100)
     api_key: str | None = Field(default=None, sa_column=Column(Text))
     temperature: float = Field(default=0.2)
-    max_tokens: int = Field(default=4096)
+    max_tokens: int = Field(default=DEFAULT_LLM_MAX_TOKENS)
     is_active: bool = Field(default=True, index=True)
     updated_by: str | None = Field(default=None, max_length=50)
     updated_at: datetime = Field(default_factory=utcnow, sa_column=Column(DateTime(timezone=True), nullable=False))
