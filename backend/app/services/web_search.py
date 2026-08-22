@@ -112,15 +112,20 @@ async def _call_mcp_web_search(config: RuntimeWebSearchConfig, query: str) -> di
         "MINIMAX_API_KEY": config.api_key,
         "MINIMAX_API_HOST": config.endpoint.rstrip("/"),
     }
-    process = await asyncio.create_subprocess_exec(
-        config.command,
-        *config.args,
-        stdin=asyncio.subprocess.PIPE,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-        limit=MCP_STDIO_READ_LIMIT,
-        env=env,
-    )
+    try:
+        process = await asyncio.create_subprocess_exec(
+            config.command,
+            *config.args,
+            stdin=asyncio.subprocess.PIPE,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            limit=MCP_STDIO_READ_LIMIT,
+            env=env,
+        )
+    except FileNotFoundError as exc:
+        raise RuntimeError(f"web search MCP command not found: {config.command}") from exc
+    except OSError as exc:
+        raise RuntimeError(f"could not start web search MCP command {config.command}: {exc}") from exc
     try:
         await _mcp_request(
             process,
@@ -162,7 +167,12 @@ async def _mcp_request(
     await _write_json_line(process, payload)
     stdout_noise: list[str] = []
     while True:
-        line = await asyncio.wait_for(process.stdout.readline(), timeout=timeout_seconds)  # type: ignore[union-attr]
+        try:
+            line = await asyncio.wait_for(process.stdout.readline(), timeout=timeout_seconds)  # type: ignore[union-attr]
+        except asyncio.TimeoutError as exc:
+            stderr = await _read_stderr(process)
+            details = f": {stderr}" if stderr else ""
+            raise RuntimeError(f"MCP {method} timed out after {timeout_seconds}s waiting for response{details}") from exc
         if not line:
             stderr = await _read_stderr(process)
             noise = "; ".join(stdout_noise[-3:])

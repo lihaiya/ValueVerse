@@ -71,7 +71,7 @@ async function improve() {
 async function webEnrich() {
   webEnriching.value = true
   try {
-    await api.post<WikiNode>(`/api/wiki/node/${props.node.id}/web-enrich`, { top_k: 5 }, { timeout: 180000 })
+    await api.post<WikiNode>(`/api/wiki/node/${props.node.id}/web-enrich`, { top_k: 5 }, { timeout: 420000 })
     ElMessage.success('联网补充已写入词条')
     emit('updated')
   } catch (err) {

@@ -97,6 +97,29 @@ async def test_mcp_request_skips_stdout_noise() -> None:
 
 
 @pytest.mark.asyncio
+async def test_mcp_request_timeout_has_actionable_message() -> None:
+    class FakeStdin:
+        def write(self, data: bytes) -> None:
+            return None
+
+        async def drain(self) -> None:
+            await asyncio.sleep(0)
+
+    class SlowStdout:
+        async def readline(self) -> bytes:
+            await asyncio.sleep(1)
+            return b""
+
+    class FakeProcess:
+        stdin = FakeStdin()
+        stdout = SlowStdout()
+        stderr = None
+
+    with pytest.raises(RuntimeError, match="MCP tools/call timed out after 0.01s"):
+        await _mcp_request(FakeProcess(), 2, "tools/call", {}, 0.01)  # type: ignore[arg-type]
+
+
+@pytest.mark.asyncio
 async def test_mcp_process_allows_large_json_lines(monkeypatch) -> None:
     captured: dict[str, object] = {}
 

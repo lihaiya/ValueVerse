@@ -12,12 +12,17 @@ from app.services.long_term_memory import (
     MemoryScope,
     ProviderResult,
 )
+from app.services.llm_factory import LLMFactory, RuntimeLLMConfig
 from app.services.memory import (
     COGNEE_LLM_DEFAULTS,
     MemoryClient,
     _as_bool,
+    _cognee_model_name,
+    _prepare_cognee_runtime,
     _dataset_name,
     _prepare_cognee_environment,
+    _restore_cognee_llm_config,
+    _snapshot_cognee_llm_config,
 )
 
 
@@ -59,6 +64,43 @@ def test_fastembed_local_flag_parsing() -> None:
     assert _as_bool("1") is True
     assert _as_bool("false") is False
     assert _as_bool(None) is False
+
+
+def test_cognee_runtime_updates_cached_llm_config(monkeypatch) -> None:
+    from cognee.infrastructure.llm import get_llm_config
+
+    snapshot = _snapshot_cognee_llm_config()
+
+    def fake_get_config(**_: object) -> RuntimeLLMConfig:
+        return RuntimeLLMConfig(
+            profile_name="MiniMax",
+            provider="minimax",
+            endpoint="https://api.minimaxi.com/v1",
+            model_name="MiniMax-M3",
+            api_key="runtime-secret",
+            temperature=0.2,
+            max_tokens=32768,
+        )
+
+    monkeypatch.setattr(LLMFactory, "get_config", staticmethod(fake_get_config))
+    try:
+        workspace_id = uuid4()
+        owner_user_id = uuid4()
+        _prepare_cognee_runtime(workspace_id, owner_user_id)
+        llm_config = get_llm_config()
+
+        assert llm_config.llm_provider == "custom"
+        assert llm_config.llm_model == "openai/MiniMax-M3"
+        assert llm_config.llm_endpoint == "https://api.minimaxi.com/v1"
+        assert llm_config.llm_api_key == "runtime-secret"
+    finally:
+        _restore_cognee_llm_config(snapshot)
+
+
+def test_cognee_model_name_prefixes_minimax_for_litellm() -> None:
+    assert _cognee_model_name("minimax", "MiniMax-M3") == "openai/MiniMax-M3"
+    assert _cognee_model_name("minimax", "openai/MiniMax-M3") == "openai/MiniMax-M3"
+    assert _cognee_model_name("openai", "gpt-4.1") == "gpt-4.1"
 
 
 def test_dataset_name_requires_workspace_and_preserves_folder_scope() -> None:

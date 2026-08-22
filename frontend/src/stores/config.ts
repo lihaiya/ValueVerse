@@ -125,7 +125,11 @@ export const useConfigStore = defineStore('config', () => {
   async function testWebSearch() {
     loading.value = true
     try {
-      const response = await api.post<WebSearchTestResponse>('/api/settings/test-web-search')
+      const active = webSearchConfigs.value.find((item) => item.is_active) || webSearchConfig.value
+      const timeoutSeconds = Math.max(180, (active?.timeout_seconds || 45) * 2 + 30)
+      const response = await api.post<WebSearchTestResponse>('/api/settings/test-web-search', undefined, {
+        timeout: timeoutSeconds * 1000,
+      })
       webSearchTestResult.value = response.data
       return response.data
     } finally {

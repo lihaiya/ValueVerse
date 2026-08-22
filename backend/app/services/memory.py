@@ -56,7 +56,16 @@ COGNEE_RUNTIME_ENV_KEYS = {
     "LLM_ENDPOINT",
     "OPENAI_API_BASE",
     "OPENAI_BASE_URL",
+    "LLM_MAX_COMPLETION_TOKENS",
 }
+COGNEE_LLM_CONFIG_FIELDS = (
+    "llm_provider",
+    "llm_model",
+    "llm_endpoint",
+    "llm_api_key",
+    "llm_max_completion_tokens",
+    "llm_instructor_mode",
+)
 _COGNEE_RUNTIME_LOCK = asyncio.Lock()
 _FASTEMBED_LOCAL_PATCHED = False
 
@@ -442,6 +451,7 @@ class MemoryClient:
 
         async with _COGNEE_RUNTIME_LOCK:
             previous = {key: os.environ.get(key) for key in COGNEE_RUNTIME_ENV_KEYS}
+            previous_cognee_config = _snapshot_cognee_llm_config()
             _prepare_cognee_runtime(workspace_id, owner_user_id or self.owner_user_id)
             try:
                 yield
@@ -451,6 +461,7 @@ class MemoryClient:
                         os.environ.pop(key, None)
                     else:
                         os.environ[key] = value
+                _restore_cognee_llm_config(previous_cognee_config)
 
 
 def _load_provider(cognee_enabled: bool) -> LongTermMemoryProvider:
@@ -471,22 +482,27 @@ def _prepare_cognee_runtime(workspace_id: UUID | str | None, owner_user_id: UUID
     if workspace is None:
         return
     config = LLMFactory.get_config(workspace_id=workspace, owner_user_id=owner)
+    max_completion_tokens = str(max(1024, min(config.max_tokens, 65536)))
     if config.provider == "ollama":
-        os.environ.pop("LLM_API_KEY", None)
+        os.environ["LLM_API_KEY"] = config.api_key or "ollama-local"
         os.environ["LLM_PROVIDER"] = "ollama"
         os.environ["LLM_MODEL"] = config.model_name
-        os.environ["LLM_ENDPOINT"] = config.effective_endpoint
-        os.environ["OPENAI_API_BASE"] = config.effective_endpoint
-        os.environ["OPENAI_BASE_URL"] = config.effective_endpoint
+        os.environ["LLM_ENDPOINT"] = _cognee_ollama_endpoint(config.effective_endpoint)
+        os.environ["OPENAI_API_BASE"] = os.environ["LLM_ENDPOINT"]
+        os.environ["OPENAI_BASE_URL"] = os.environ["LLM_ENDPOINT"]
+        os.environ["LLM_MAX_COMPLETION_TOKENS"] = max_completion_tokens
+        _sync_cognee_llm_config()
         return
     if not config.api_key:
         raise RuntimeError(f"{config.provider} API key is required for Cognee memory")
     os.environ["LLM_API_KEY"] = config.api_key
     os.environ["LLM_PROVIDER"] = COGNEE_PROVIDER_ALIASES.get(config.provider, config.provider)
-    os.environ["LLM_MODEL"] = config.model_name
+    os.environ["LLM_MODEL"] = _cognee_model_name(config.provider, config.model_name)
     os.environ["LLM_ENDPOINT"] = config.effective_endpoint
     os.environ["OPENAI_API_BASE"] = config.effective_endpoint
     os.environ["OPENAI_BASE_URL"] = config.effective_endpoint
+    os.environ["LLM_MAX_COMPLETION_TOKENS"] = max_completion_tokens
+    _sync_cognee_llm_config()
 
 
 def _prepare_cognee_environment(environ: dict[str, str] | None = None) -> None:
@@ -530,6 +546,56 @@ def _configure_fastembed() -> None:
     if engine_module is not None:
         engine_module.TextEmbedding = local_text_embedding
     _FASTEMBED_LOCAL_PATCHED = True
+
+
+def _sync_cognee_llm_config() -> None:
+    try:
+        from cognee.infrastructure.llm import get_llm_config
+    except Exception:
+        return
+    llm_config = get_llm_config()
+    llm_config.llm_provider = os.environ["LLM_PROVIDER"]
+    llm_config.llm_model = os.environ["LLM_MODEL"]
+    llm_config.llm_endpoint = os.environ["LLM_ENDPOINT"]
+    llm_config.llm_api_key = os.environ["LLM_API_KEY"]
+    llm_config.llm_max_completion_tokens = int(os.environ["LLM_MAX_COMPLETION_TOKENS"])
+    llm_config.llm_instructor_mode = os.getenv(
+        "LLM_INSTRUCTOR_MODE",
+        llm_config.llm_instructor_mode or "json_mode",
+    )
+
+
+def _snapshot_cognee_llm_config() -> dict[str, Any] | None:
+    try:
+        from cognee.infrastructure.llm import get_llm_config
+    except Exception:
+        return None
+    llm_config = get_llm_config()
+    return {field: getattr(llm_config, field, None) for field in COGNEE_LLM_CONFIG_FIELDS}
+
+
+def _restore_cognee_llm_config(snapshot: dict[str, Any] | None) -> None:
+    if snapshot is None:
+        return
+    try:
+        from cognee.infrastructure.llm import get_llm_config
+    except Exception:
+        return
+    llm_config = get_llm_config()
+    for field, value in snapshot.items():
+        setattr(llm_config, field, value)
+
+
+def _cognee_model_name(provider: str, model_name: str) -> str:
+    model = model_name.strip()
+    if provider in {"minimax", "custom_api"} and "/" not in model:
+        return f"openai/{model}"
+    return model
+
+
+def _cognee_ollama_endpoint(endpoint: str) -> str:
+    base = endpoint.rstrip("/")
+    return base if base.endswith("/v1") else f"{base}/v1"
 
 
 def _dataset_name(metadata: dict[str, Any]) -> str:
